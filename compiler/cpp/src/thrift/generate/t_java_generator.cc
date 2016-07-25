@@ -870,6 +870,38 @@ void t_java_generator::generate_java_union(t_struct* tstruct) {
 
   f_struct << endl;
 
+  // factories
+  {
+    f_struct << endl;
+    auto name = tstruct->get_name();
+    indent(f_struct) << "public static class " << name << "Factory {" << endl;
+    indent_up();
+            
+    indent(f_struct) << "public " << name 
+            << " allocate() { return new " 
+            << name << "(); }"
+            << endl;
+    indent(f_struct) << "public " << name 
+            << " allocate(" << name << " other) { return new " 
+            << name << "(other); }"
+            << endl;
+
+    indent_down();
+    indent(f_struct) << "}" << endl;
+    f_struct << endl;
+
+    indent(f_struct) << "public static volatile " 
+            << name << "Factory factory = new " << name << "Factory();" 
+            << endl;
+    indent(f_struct) << "public static void setFactory("
+            << name << "Factory f) { factory = f;}"
+            << endl;
+    indent(f_struct) << "public static " << name
+            << "Factory getFactory() { return factory;}"
+            << endl;
+    indent(f_struct) << endl;
+  }
+
   scope_down(f_struct);
 
   f_struct.close();
@@ -907,7 +939,7 @@ void t_java_generator::generate_union_constructor(ofstream& out, t_struct* tstru
   indent(out) << "}" << endl;
 
   indent(out) << "public " << tstruct->get_name() << " deepCopy() {" << endl;
-  indent(out) << "  return new " << tstruct->get_name() << "(this);" << endl;
+  indent(out) << "  return " << tstruct->get_name() << ".factory.allocate"<< "(this);" << endl;
   indent(out) << "}" << endl << endl;
 
   // generate "constructors" for each field
@@ -1398,6 +1430,7 @@ void t_java_generator::generate_java_struct_definition(ofstream& out,
   indent(out) << "public " << (is_final ? "final " : "") << (in_class ? "static " : "") << "class "
               << tstruct->get_name() << " ";
 
+
   if (is_exception) {
     out << "extends org.apache.thrift.TException ";
   }
@@ -1411,6 +1444,7 @@ void t_java_generator::generate_java_struct_definition(ofstream& out,
   out << " ";
 
   scope_up(out);
+
 
   generate_struct_desc(out, tstruct);
 
@@ -1512,7 +1546,11 @@ void t_java_generator::generate_java_struct_definition(ofstream& out,
   indent_down();
   indent(out) << "}" << endl << endl;
 
+  std::string contstuctorParameters = "";
+  std::string parameterNames = "(";
   if (!members.empty() && !all_optional_members) {
+    contstuctorParameters += "(";
+
     // Full constructor for all fields
     indent(out) << "public " << tstruct->get_name() << "(" << endl;
     indent_up();
@@ -1521,12 +1559,21 @@ void t_java_generator::generate_java_struct_definition(ofstream& out,
       if ((*m_iter)->get_req() != t_field::T_OPTIONAL) {
         if (!first) {
           out << "," << endl;
+          contstuctorParameters += ", ";
+          parameterNames += ", ";
         }
         first = false;
-        indent(out) << type_name((*m_iter)->get_type()) << " " << (*m_iter)->get_name();
+        auto param = type_name((*m_iter)->get_type()) + " " + (*m_iter)->get_name();
+
+        indent(out) << param;
+        contstuctorParameters += param;
+        parameterNames += (*m_iter)->get_name();
       }
     }
     out << ")" << endl;
+    contstuctorParameters += ")";
+    parameterNames += ")";
+
     indent_down();
     indent(out) << "{" << endl;
     indent_up();
@@ -1597,11 +1644,49 @@ void t_java_generator::generate_java_struct_definition(ofstream& out,
   }
 
   indent_down();
-  indent(out) << "}" << endl << endl;
+  indent(out) << "}" << endl;
+
+  // factories
+  auto name = tstruct->get_name();
+  {
+    out << endl;
+    indent(out) << "public static class " << name << "Factory {" << endl;
+    indent_up();
+            
+    indent(out) << "public " << name 
+            << " allocate() { return new " 
+            << name << "(); }"
+            << endl;
+    indent(out) << "public " << name 
+            << " allocate(" << name << " other) { return new " 
+            << name << "(other); }"
+            << endl;
+    if (contstuctorParameters != "") {
+        indent(out) << "public " << name 
+                << " allocate" << contstuctorParameters 
+                << " { return new " << name << parameterNames << "; }"
+                << endl;
+    }
+
+    indent_down();
+    indent(out) << "}" << endl;
+    out << endl;
+
+    indent(out) << "public static volatile " 
+            << name << "Factory factory = new " << name << "Factory();" 
+            << endl;
+    indent(out) << "public static void setFactory("
+            << name << "Factory f) { factory = f;}"
+            << endl;
+    indent(out) << "public static " << name
+            << "Factory getFactory() { return factory;}"
+            << endl;
+    indent(out) << endl;
+  }
 
   // clone method, so that you can deep copy an object when you don't know its class.
   indent(out) << "public " << tstruct->get_name() << " deepCopy() {" << endl;
-  indent(out) << "  return new " << tstruct->get_name() << "(this);" << endl;
+  indent(out) << "  return " << tstruct->get_name() << ".factory.allocate" << "(this);" << endl;
   indent(out) << "}" << endl << endl;
 
   generate_java_struct_clear(out, tstruct);
@@ -3744,7 +3829,8 @@ void t_java_generator::generate_deserialize_struct(ofstream& out,
     indent(out) << "if (" << prefix << " == null) {" << endl;
     indent_up();
   }
-  indent(out) << prefix << " = new " << type_name(tstruct) << "();" << endl;
+
+  indent(out) << prefix << " = " << type_name(tstruct) + ".factory.allocate();" << endl;
   if (reuse_objects_) {
     indent_down();
     indent(out) << "}" << endl;
@@ -4763,7 +4849,9 @@ void t_java_generator::generate_deep_copy_non_container(ofstream& out,
       out << source_name;
     }
   } else {
-    out << "new " << type_name(type, true, true) << "(" << source_name << ")";
+
+    auto allocateCall = type_name(type, true, true) + ".factory.allocate";
+    out << " " << allocateCall << "(" << source_name << ")";
   }
 }
 
